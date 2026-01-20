@@ -1,6 +1,7 @@
 {
   "data_csv": "v1/data/unified_training_dataset.csv",
-  "val_split": 0.2,
+  "val_split": 0.15,
+  "test_split": 0.15,
   "num_epochs": 150,
   "learning_rate": 0.005,
   "early_stopping_patience": 15,

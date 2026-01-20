@@ -1,7 +1,7 @@
 """ALS edge-classification model for v1.
 
-This is a minimal logistic model that maps three features
-[Semantic_Similarity, Emotional_Alignment, Time_Closeness]
+This is a minimal logistic model that maps four features:
+[Semantic_Similarity, Emotional_Alignment, Time_Closeness, Target_Intensity]
 into a single edge "link" probability via a linear layer
 followed by a sigmoid.
 """
@@ -13,7 +13,7 @@ import torch.nn as nn
 
 
 class ALSModel(nn.Module):
-    def __init__(self, input_dim: int = 3, ignore_feature: int | None = None) -> None:
+    def __init__(self, input_dim: int = 4, ignore_feature: int | None = None) -> None:
         super().__init__()
         # Order of inputs varies by config; default is 3 for legacy
         self.slp = nn.Linear(input_dim, 1, bias=True)

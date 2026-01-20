@@ -30,7 +30,7 @@ def load_config(path: Path) -> Dict:
         return json.load(f)
 
 
-def make_datasets(cfg: Dict) -> Tuple[TensorDataset, TensorDataset]:
+def make_datasets(cfg: Dict) -> Tuple[TensorDataset, TensorDataset, TensorDataset]:
     import pandas as pd
 
     data_csv = cfg["data_csv"]
@@ -44,31 +44,64 @@ def make_datasets(cfg: Dict) -> Tuple[TensorDataset, TensorDataset]:
 
     dataset = TensorDataset(X, y)
 
-    val_split = float(cfg.get("val_split", 0.2))
+    val_split = float(cfg.get("val_split", 0.15))
+    test_split = float(cfg.get("test_split", 0.15))
+    
     val_size = int(len(dataset) * val_split)
-    train_size = len(dataset) - val_size
+    test_size = int(len(dataset) * test_split)
+    train_size = len(dataset) - val_size - test_size
 
     generator = torch.Generator().manual_seed(int(cfg.get("random_seed", 42)))
-    train_ds, val_ds = random_split(dataset, [train_size, val_size], generator=generator)
-    return train_ds, val_ds
+    train_ds, val_ds, test_ds = random_split(dataset, [train_size, val_size, test_size], generator=generator)
+    return train_ds, val_ds, test_ds
 
 
-def evaluate_dataset(dataset: TensorDataset, model: ALSModel) -> float:
-    """Compute average BCE loss over a dataset (baseline or validation)."""
+def evaluate_dataset(dataset: TensorDataset, model: ALSModel, pos_weight: float = 1.0) -> Dict[str, float]:
+    """Compute metrics (Loss, Accuracy, Precision, Recall, F1) over a dataset."""
 
-    loss_fn = torch.nn.BCELoss()
+    loss_fn = torch.nn.BCELoss(reduction="none")
     loader = DataLoader(dataset, batch_size=256)
     model.eval()
+    
     total_loss = 0.0
     n_samples = 0
+    all_y_true = []
+    all_y_pred = []
+    all_y_prob = []
+
     with torch.no_grad():
         for X_batch, y_batch in loader:
-            y_pred = model(X_batch)
-            loss = loss_fn(y_pred, y_batch)
+            y_prob = model(X_batch)
+            raw_loss = loss_fn(y_prob, y_batch)
+            
+            # Apply pos_weight manually to match training objective
+            weights = torch.ones_like(y_batch)
+            weights[y_batch == 1] = pos_weight
+            loss = (raw_loss * weights).mean()
+
             batch_size = y_batch.shape[0]
             total_loss += loss.item() * batch_size
             n_samples += batch_size
-    return total_loss / max(n_samples, 1)
+            
+            all_y_true.extend(y_batch.numpy().flatten())
+            all_y_prob.extend(y_prob.numpy().flatten())
+            all_y_pred.extend((y_prob > 0.5).float().numpy().flatten())
+
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+    avg_loss = total_loss / max(n_samples, 1)
+    acc = accuracy_score(all_y_true, all_y_pred)
+    prec = precision_score(all_y_true, all_y_pred, zero_division=0)
+    rec = recall_score(all_y_true, all_y_pred, zero_division=0)
+    f1 = f1_score(all_y_true, all_y_pred, zero_division=0)
+
+    return {
+        "loss": avg_loss,
+        "accuracy": acc,
+        "precision": prec,
+        "recall": rec,
+        "f1": f1
+    }
 
 
 def train_single_stage(
@@ -430,12 +463,14 @@ def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"Loading data from {cfg['data_csv']}")
-    train_ds, val_ds = make_datasets(cfg)
+    train_ds, val_ds, test_ds = make_datasets(cfg)
 
     input_dim = len(cfg.get("feature_fields", []))
     model = ALSModel(input_dim=input_dim, ignore_feature=None)
-    baseline_val_loss = evaluate_dataset(val_ds, model)
-    print(f"Baseline validation BCE loss (untrained model): {baseline_val_loss:.4f}")
+    
+    # Baseline check
+    baseline_metrics = evaluate_dataset(val_ds, model)
+    print(f"Baseline validation BCE loss (untrained model): {baseline_metrics['loss']:.4f}")
 
     if mode == "single_stage":
         print("Running single-stage training (all weights jointly)...")
@@ -444,8 +479,21 @@ def main() -> None:
         print("Running multistage training (semantic+time, then emotion)...")
         model, metrics = train_multistage(train_ds, val_ds, model, cfg)
 
-    final_val_loss = evaluate_dataset(val_ds, model)
-    print(f"Final validation BCE loss: {final_val_loss:.4f}")
+    # Final Evaluation
+    pos_weight = metrics.get("pos_weight", 1.0)
+    val_results = evaluate_dataset(val_ds, model, pos_weight)
+    test_results = evaluate_dataset(test_ds, model, pos_weight)
+
+    print(f"\nFinal Validation Results:")
+    for m, v in val_results.items():
+        print(f"  {m:10}: {v:.4f}")
+
+    print(f"\nFinal Test Results:")
+    for m, v in test_results.items():
+        print(f"  {m:10}: {v:.4f}")
+
+    # Save test results to metrics
+    metrics["test_performance"] = test_results
 
     # Print observed weights
     weights = model.slp.weight.detach().numpy()[0]
