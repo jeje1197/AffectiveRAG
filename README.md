@@ -20,7 +20,7 @@ pip install .
 
 ## What is Affective-RAG?
 
-Affective-RAG helps you build systems that remember and retrieve memories based on semantic similarity, emotional resonance, and temporal proximity. Instead of just finding similar text, it find emotionally and contextually relevant memory chains by integrating semantic similarity, emotional similarity, and temporal proximity to move beyond a standard 1D top-$k$ search.
+Affective-RAG helps you build systems that remember and retrieve memories based on semantic similarity, emotional resonance, and temporal proximity. Instead of just finding similar text, it find emotionally and contextually relevant memory chains by integrating semantic similarity, emotional similarity, and temporal proximity to move beyond a standard 1D top-k search.
 
 **Key Features:**
 
